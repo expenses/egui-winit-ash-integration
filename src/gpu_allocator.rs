@@ -39,6 +39,7 @@ impl AllocationCreateInfoTrait for AllocationCreateDesc<'static> {
                 crate::MemoryLocation::GpuToCpu => gpu_allocator::MemoryLocation::GpuToCpu,
             },
             linear,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
         }
     }
 }

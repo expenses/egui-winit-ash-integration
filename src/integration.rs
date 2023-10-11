@@ -3,21 +3,14 @@
 use ash::{extensions::khr::Swapchain, vk, Device};
 use bytemuck::bytes_of;
 use egui::{
-    epaint::{
-        ahash::AHashMap, ImageDelta
-    },
-    Context,
-    TexturesDelta,
-    TextureId
+    epaint::{ahash::AHashMap, ImageDelta},
+    Context, TextureId, TexturesDelta,
 };
-use egui_winit::{
-    winit::window::Window,
-    EventResponse
-};
-use winit::event_loop::EventLoop;
+use egui_winit::{winit::window::Window, EventResponse};
 use std::ffi::CString;
+use winit::event_loop::EventLoop;
 
-use crate::{*, utils::insert_image_memory_barrier};
+use crate::{utils::insert_image_memory_barrier, *};
 
 /// egui integration with winit and ash.
 pub struct Integration<A: AllocatorTrait> {
@@ -49,7 +42,7 @@ pub struct Integration<A: AllocatorTrait> {
     texture_image_infos: AHashMap<TextureId, vk::ImageCreateInfo>,
     texture_allocations: AHashMap<TextureId, A::Allocation>,
     texture_image_views: AHashMap<TextureId, vk::ImageView>,
-    
+
     user_texture_layout: vk::DescriptorSetLayout,
     user_textures: Vec<Option<vk::DescriptorSet>>,
 }
@@ -70,13 +63,13 @@ impl<A: AllocatorTrait> Integration<A> {
         swapchain: vk::SwapchainKHR,
         surface_format: vk::SurfaceFormatKHR,
     ) -> Self {
-
         // Create context
         let context = Context::default();
         context.set_fonts(font_definitions);
         context.set_style(style);
 
-        let egui_winit = egui_winit::State::new(&event_loop);
+        let mut egui_winit = egui_winit::State::new(&event_loop);
+        egui_winit.set_pixels_per_point(scale_factor as f32);
 
         // Get swap_images to get len of swapchain images and to create framebuffers
         let swap_images = unsafe {
@@ -474,7 +467,7 @@ impl<A: AllocatorTrait> Integration<A> {
             scale_factor,
             context,
             egui_winit,
-            
+
             device,
             allocator,
             qfi,
@@ -499,7 +492,7 @@ impl<A: AllocatorTrait> Integration<A> {
             texture_image_views: AHashMap::new(),
 
             user_texture_layout,
-            user_textures 
+            user_textures,
         }
     }
 
@@ -514,7 +507,10 @@ impl<A: AllocatorTrait> Integration<A> {
     }
 
     /// handling winit event.
-    pub fn handle_event(&mut self, winit_event: &egui_winit::winit::event::WindowEvent<'_>) -> EventResponse {
+    pub fn handle_event(
+        &mut self,
+        winit_event: &egui_winit::winit::event::WindowEvent<'_>,
+    ) -> EventResponse {
         self.egui_winit.on_event(&self.context, winit_event)
     }
 
@@ -528,10 +524,12 @@ impl<A: AllocatorTrait> Integration<A> {
     pub fn end_frame(&mut self, window: &Window) -> egui::FullOutput {
         let output = self.context.end_frame();
 
-        self.egui_winit.handle_platform_output(window, &self.context, output.platform_output.clone());
+        self.egui_winit.handle_platform_output(
+            window,
+            &self.context,
+            output.platform_output.clone(),
+        );
 
-        
-        
         output
     }
 
@@ -546,7 +544,7 @@ impl<A: AllocatorTrait> Integration<A> {
         command_buffer: vk::CommandBuffer,
         swapchain_image_index: usize,
         clipped_meshes: Vec<egui::ClippedPrimitive>,
-        textures_delta: TexturesDelta
+        textures_delta: TexturesDelta,
     ) {
         let index = swapchain_image_index;
 
@@ -661,7 +659,11 @@ impl<A: AllocatorTrait> Integration<A> {
         // render meshes
         let mut vertex_base = 0;
         let mut index_base = 0;
-        for egui::ClippedPrimitive { clip_rect, primitive } in clipped_meshes {
+        for egui::ClippedPrimitive {
+            clip_rect,
+            primitive,
+        } in clipped_meshes
+        {
             let mesh = match primitive {
                 egui::epaint::Primitive::Mesh(mesh) => mesh,
                 egui::epaint::Primitive::Callback(_) => todo!(),
@@ -669,7 +671,7 @@ impl<A: AllocatorTrait> Integration<A> {
             if mesh.vertices.is_empty() || mesh.indices.is_empty() {
                 continue;
             }
-                      
+
             unsafe {
                 if let egui::TextureId::User(id) = mesh.texture_id {
                     if let Some(descriptor_set) = self.user_textures[id as usize] {
@@ -808,18 +810,25 @@ impl<A: AllocatorTrait> Integration<A> {
                     image.pixels.len(),
                     "Mismatch between texture size and texel count"
                 );
-                image.pixels.iter().flat_map(|color| color.to_array()).collect()
+                image
+                    .pixels
+                    .iter()
+                    .flat_map(|color| color.to_array())
+                    .collect()
             }
-            egui::ImageData::Font(image) => {
-                image.srgba_pixels(None).flat_map(|color| color.to_array()).collect()
-            }
+            egui::ImageData::Font(image) => image
+                .srgba_pixels(None)
+                .flat_map(|color| color.to_array())
+                .collect(),
         };
         let cmd_pool = {
             let cmd_pool_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(self.qfi)
                 .build();
             unsafe {
-                self.device.create_command_pool(&cmd_pool_info, None).unwrap()
+                self.device
+                    .create_command_pool(&cmd_pool_info, None)
+                    .unwrap()
             }
         };
         let cmd_buff = {
@@ -829,26 +838,35 @@ impl<A: AllocatorTrait> Integration<A> {
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .build();
             unsafe {
-                self.device.allocate_command_buffers(&cmd_buff_alloc_info).unwrap()[0]
+                self.device
+                    .allocate_command_buffers(&cmd_buff_alloc_info)
+                    .unwrap()[0]
             }
         };
-        let fence_info = vk::FenceCreateInfo::builder()
-            .build();
+        let fence_info = vk::FenceCreateInfo::builder().build();
         let cmd_buff_fence = unsafe { self.device.create_fence(&fence_info, None).unwrap() };
-        
+
         let (staging_buffer, staging_allocation) = {
             let buffer_size = data.len() as vk::DeviceSize;
             let buffer_info = vk::BufferCreateInfo::builder()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC);
             let texture_buffer = unsafe { self.device.create_buffer(&buffer_info, None) }.unwrap();
-            let requirements = unsafe { self.device.get_buffer_memory_requirements(texture_buffer) };
-            let allocation = self.allocator.allocate(A::AllocationCreateInfo::new(
-                requirements,
-                MemoryLocation::CpuToGpu,
-                true
-            )).unwrap();
-            unsafe { self.device.bind_buffer_memory(texture_buffer, allocation.memory(), allocation.offset()).unwrap() };
+            let requirements =
+                unsafe { self.device.get_buffer_memory_requirements(texture_buffer) };
+            let allocation = self
+                .allocator
+                .allocate(A::AllocationCreateInfo::new(
+                    requirements,
+                    MemoryLocation::CpuToGpu,
+                    true,
+                ))
+                .unwrap();
+            unsafe {
+                self.device
+                    .bind_buffer_memory(texture_buffer, allocation.memory(), allocation.offset())
+                    .unwrap()
+            };
             (texture_buffer, allocation)
         };
         let ptr = staging_allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
@@ -859,7 +877,7 @@ impl<A: AllocatorTrait> Integration<A> {
             let extent = vk::Extent3D {
                 width: delta.image.width() as u32,
                 height: delta.image.height() as u32,
-                depth:1
+                depth: 1,
             };
             let create_info = vk::ImageCreateInfo::builder()
                 .array_layers(1)
@@ -872,16 +890,27 @@ impl<A: AllocatorTrait> Integration<A> {
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC)
+                .usage(
+                    vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_DST
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                )
                 .build();
             let handle = unsafe { self.device.create_image(&create_info, None) }.unwrap();
             let requirements = unsafe { self.device.get_image_memory_requirements(handle) };
-            let allocation = self.allocator.allocate(A::AllocationCreateInfo::new(
-                requirements,
-                MemoryLocation::GpuOnly,
-                false
-            )).unwrap();
-            unsafe { self.device.bind_image_memory(handle, allocation.memory(), allocation.offset()).unwrap() };
+            let allocation = self
+                .allocator
+                .allocate(A::AllocationCreateInfo::new(
+                    requirements,
+                    MemoryLocation::GpuOnly,
+                    false,
+                ))
+                .unwrap();
+            unsafe {
+                self.device
+                    .bind_image_memory(handle, allocation.memory(), allocation.offset())
+                    .unwrap()
+            };
             (handle, create_info, allocation)
         };
         self.texture_image_infos.insert(texture_id, info);
@@ -891,13 +920,15 @@ impl<A: AllocatorTrait> Integration<A> {
                 .flags(vk::ImageViewCreateFlags::empty())
                 .format(vk::Format::R8G8B8A8_UNORM)
                 .image(texture_image)
-                .subresource_range(vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_array_layer(0)
-                    .base_mip_level(0)
-                    .layer_count(1)
-                    .level_count(1)
-                    .build())
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_array_layer(0)
+                        .base_mip_level(0)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .build();
             unsafe { self.device.create_image_view(&create_info, None).unwrap() }
@@ -907,10 +938,14 @@ impl<A: AllocatorTrait> Integration<A> {
             let cmd_buff_begin_info = vk::CommandBufferBeginInfo::builder()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                 .build();
-            self.device.begin_command_buffer(cmd_buff, &cmd_buff_begin_info).unwrap();
+            self.device
+                .begin_command_buffer(cmd_buff, &cmd_buff_begin_info)
+                .unwrap();
         }
         // Transition texture image for transfer dst
-        insert_image_memory_barrier(&self.device, &cmd_buff,
+        insert_image_memory_barrier(
+            &self.device,
+            &cmd_buff,
             &texture_image,
             vk::QUEUE_FAMILY_IGNORED,
             vk::QUEUE_FAMILY_IGNORED,
@@ -926,22 +961,39 @@ impl<A: AllocatorTrait> Integration<A> {
                 .layer_count(1u32)
                 .base_mip_level(0u32)
                 .level_count(1u32)
-                .build());
+                .build(),
+        );
         let region = vk::BufferImageCopy::builder()
             .buffer_offset(0)
             .buffer_row_length(delta.image.width() as u32)
             .buffer_image_height(delta.image.height() as u32)
-            .image_subresource(vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_array_layer(0)
-                .layer_count(1)
-                .mip_level(0)
-                .build())
-            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0})
-            .image_extent(vk::Extent3D { width: delta.image.width() as u32, height: delta.image.height() as u32, depth: 1})
+            .image_subresource(
+                vk::ImageSubresourceLayers::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .mip_level(0)
+                    .build(),
+            )
+            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+            .image_extent(vk::Extent3D {
+                width: delta.image.width() as u32,
+                height: delta.image.height() as u32,
+                depth: 1,
+            })
             .build();
-        unsafe { self.device.cmd_copy_buffer_to_image(cmd_buff, staging_buffer, texture_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]); }
-        insert_image_memory_barrier(&self.device, &cmd_buff,
+        unsafe {
+            self.device.cmd_copy_buffer_to_image(
+                cmd_buff,
+                staging_buffer,
+                texture_image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            );
+        }
+        insert_image_memory_barrier(
+            &self.device,
+            &cmd_buff,
             &texture_image,
             vk::QUEUE_FAMILY_IGNORED,
             vk::QUEUE_FAMILY_IGNORED,
@@ -957,39 +1009,49 @@ impl<A: AllocatorTrait> Integration<A> {
                 .layer_count(1u32)
                 .base_mip_level(0u32)
                 .level_count(1u32)
-                .build());
-        
+                .build(),
+        );
+
         unsafe {
             self.device.end_command_buffer(cmd_buff).unwrap();
         }
         let cmd_buffs = [cmd_buff];
-        let submit_infos = [
-            vk::SubmitInfo::builder()
+        let submit_infos = [vk::SubmitInfo::builder()
             .command_buffers(&cmd_buffs)
-            .build()
-        ];
+            .build()];
         unsafe {
-            self.device.queue_submit(self.queue, &submit_infos, cmd_buff_fence).unwrap();
-            self.device.wait_for_fences(&[cmd_buff_fence], true, u64::MAX).unwrap();
+            self.device
+                .queue_submit(self.queue, &submit_infos, cmd_buff_fence)
+                .unwrap();
+            self.device
+                .wait_for_fences(&[cmd_buff_fence], true, u64::MAX)
+                .unwrap();
         }
 
         // texture is now in GPU memory, now we need to decide whether we should register it as new or update existing
 
-        if let Some(pos) = delta.pos { // Blit texture data to existing texture if delta pos exists (e.g. font changed)
+        if let Some(pos) = delta.pos {
+            // Blit texture data to existing texture if delta pos exists (e.g. font changed)
             let existing_texture = self.texture_images.get(&texture_id);
             if let Some(existing_texture) = existing_texture {
                 let info = self.texture_image_infos.get(&texture_id).unwrap();
                 unsafe {
-                    self.device.reset_command_pool(cmd_pool, vk::CommandPoolResetFlags::empty()).unwrap();
+                    self.device
+                        .reset_command_pool(cmd_pool, vk::CommandPoolResetFlags::empty())
+                        .unwrap();
                     self.device.reset_fences(&[cmd_buff_fence]).unwrap();
                     // begin cmd buff
                     let cmd_buff_begin_info = vk::CommandBufferBeginInfo::builder()
                         .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                         .build();
-                    self.device.begin_command_buffer(cmd_buff, &cmd_buff_begin_info).unwrap();
-                    
+                    self.device
+                        .begin_command_buffer(cmd_buff, &cmd_buff_begin_info)
+                        .unwrap();
+
                     // Transition existing image for transfer dst
-                    insert_image_memory_barrier(&self.device, &cmd_buff,
+                    insert_image_memory_barrier(
+                        &self.device,
+                        &cmd_buff,
                         &existing_texture,
                         vk::QUEUE_FAMILY_IGNORED,
                         vk::QUEUE_FAMILY_IGNORED,
@@ -1005,9 +1067,12 @@ impl<A: AllocatorTrait> Integration<A> {
                             .layer_count(1u32)
                             .base_mip_level(0u32)
                             .level_count(1u32)
-                            .build());
+                            .build(),
+                    );
                     // Transition new image for transfer src
-                    insert_image_memory_barrier(&self.device, &cmd_buff,
+                    insert_image_memory_barrier(
+                        &self.device,
+                        &cmd_buff,
                         &texture_image,
                         vk::QUEUE_FAMILY_IGNORED,
                         vk::QUEUE_FAMILY_IGNORED,
@@ -1023,20 +1088,56 @@ impl<A: AllocatorTrait> Integration<A> {
                             .layer_count(1u32)
                             .base_mip_level(0u32)
                             .level_count(1u32)
-                            .build());
-                    let top_left = vk::Offset3D { x: pos[0] as i32, y: pos[1] as i32, z: 0 };
-                    let bottom_right = vk::Offset3D { x: pos[0] as i32 + delta.image.width() as i32, y: pos[1] as i32 + delta.image.height() as i32, z: 1 };
+                            .build(),
+                    );
+                    let top_left = vk::Offset3D {
+                        x: pos[0] as i32,
+                        y: pos[1] as i32,
+                        z: 0,
+                    };
+                    let bottom_right = vk::Offset3D {
+                        x: pos[0] as i32 + delta.image.width() as i32,
+                        y: pos[1] as i32 + delta.image.height() as i32,
+                        z: 1,
+                    };
 
                     let region = vk::ImageBlit {
-                        src_subresource: vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 },
-                        src_offsets: [vk::Offset3D{ x: 0, y: 0, z: 0 }, vk::Offset3D{ x: info.extent.width as i32, y: info.extent.height as i32, z: info.extent.depth as i32 }],
-                        dst_subresource: vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 },
-                        dst_offsets: [top_left, bottom_right]
+                        src_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        src_offsets: [
+                            vk::Offset3D { x: 0, y: 0, z: 0 },
+                            vk::Offset3D {
+                                x: info.extent.width as i32,
+                                y: info.extent.height as i32,
+                                z: info.extent.depth as i32,
+                            },
+                        ],
+                        dst_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        dst_offsets: [top_left, bottom_right],
                     };
-                    self.device.cmd_blit_image(cmd_buff, texture_image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, *existing_texture, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region], vk::Filter::NEAREST);
+                    self.device.cmd_blit_image(
+                        cmd_buff,
+                        texture_image,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        *existing_texture,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[region],
+                        vk::Filter::NEAREST,
+                    );
 
                     // Transition existing image for shader read
-                    insert_image_memory_barrier(&self.device, &cmd_buff,
+                    insert_image_memory_barrier(
+                        &self.device,
+                        &cmd_buff,
                         &existing_texture,
                         vk::QUEUE_FAMILY_IGNORED,
                         vk::QUEUE_FAMILY_IGNORED,
@@ -1052,16 +1153,19 @@ impl<A: AllocatorTrait> Integration<A> {
                             .layer_count(1u32)
                             .base_mip_level(0u32)
                             .level_count(1u32)
-                            .build());
+                            .build(),
+                    );
                     self.device.end_command_buffer(cmd_buff).unwrap();
                     let cmd_buffs = [cmd_buff];
-                    let submit_infos = [
-                        vk::SubmitInfo::builder()
+                    let submit_infos = [vk::SubmitInfo::builder()
                         .command_buffers(&cmd_buffs)
-                        .build()
-                    ];
-                    self.device.queue_submit(self.queue, &submit_infos, cmd_buff_fence).unwrap();
-                    self.device.wait_for_fences(&[cmd_buff_fence], true, u64::MAX).unwrap();
+                        .build()];
+                    self.device
+                        .queue_submit(self.queue, &submit_infos, cmd_buff_fence)
+                        .unwrap();
+                    self.device
+                        .wait_for_fences(&[cmd_buff_fence], true, u64::MAX)
+                        .unwrap();
 
                     // destroy texture_image and view
                     self.device.destroy_image(texture_image, None);
@@ -1071,7 +1175,8 @@ impl<A: AllocatorTrait> Integration<A> {
             } else {
                 return;
             }
-        } else { // Otherwise save the newly created texture
+        } else {
+            // Otherwise save the newly created texture
 
             // update dsc set
             let dsc_set = {
@@ -1080,30 +1185,32 @@ impl<A: AllocatorTrait> Integration<A> {
                     .set_layouts(&[self.descriptor_set_layouts[0]])
                     .build();
                 unsafe {
-                    self.device.allocate_descriptor_sets(&dsc_alloc_info).unwrap()[0]
+                    self.device
+                        .allocate_descriptor_sets(&dsc_alloc_info)
+                        .unwrap()[0]
                 }
             };
             let image_info = vk::DescriptorImageInfo::builder()
-                    .image_view(texture_image_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(self.sampler)
-                    .build();
-            let dsc_writes = [
-                    vk::WriteDescriptorSet::builder()
-                        .dst_set(dsc_set)
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .dst_array_element(0_u32)
-                        .dst_binding(0_u32)
-                        .image_info(&[image_info])
-                        .build()
-                ];
+                .image_view(texture_image_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .sampler(self.sampler)
+                .build();
+            let dsc_writes = [vk::WriteDescriptorSet::builder()
+                .dst_set(dsc_set)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .dst_array_element(0_u32)
+                .dst_binding(0_u32)
+                .image_info(&[image_info])
+                .build()];
             unsafe {
                 self.device.update_descriptor_sets(&dsc_writes, &[]);
             }
             // register new texture
             self.texture_images.insert(texture_id, texture_image);
-            self.texture_allocations.insert(texture_id, texture_allocation);
-            self.texture_image_views.insert(texture_id, texture_image_view);
+            self.texture_allocations
+                .insert(texture_id, texture_allocation);
+            self.texture_image_views
+                .insert(texture_id, texture_image_view);
             self.texture_desc_sets.insert(texture_id, dsc_set);
         }
         // cleanup
@@ -1114,7 +1221,7 @@ impl<A: AllocatorTrait> Integration<A> {
             self.device.destroy_fence(cmd_buff_fence, None);
         }
     }
-    
+
     /// Update swapchain.
     pub fn update_swapchain(
         &mut self,
@@ -1464,7 +1571,7 @@ impl<A: AllocatorTrait> Integration<A> {
     pub unsafe fn destroy(&mut self) {
         self.device
             .destroy_descriptor_set_layout(self.user_texture_layout, None);
-        
+
         for (buffer, allocation) in self
             .index_buffers
             .drain(0..)

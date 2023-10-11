@@ -1,3 +1,7 @@
+use egui::epaint::Hsva;
+use egui::load::SizedTexture;
+use egui::{ImageSource, Vec2};
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::ffi::{CStr, CString};
 use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
@@ -6,8 +10,6 @@ use std::os::raw::c_void;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, u64};
-use egui::epaint::Hsva;
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 use anyhow::Result;
 use ash::extensions::ext::DebugUtils;
@@ -18,7 +20,7 @@ use cgmath::{Deg, Matrix4, Point3, Vector3};
 use crevice::std140::AsStd140;
 use egui_winit::winit::dpi::PhysicalSize;
 use egui_winit::winit::event::{Event, WindowEvent};
-use egui_winit::winit::event_loop::{EventLoop, ControlFlow};
+use egui_winit::winit::event_loop::{ControlFlow, EventLoop};
 use egui_winit::winit::window::{Window, WindowBuilder};
 use gpu_allocator::vulkan::*;
 use memoffset::offset_of;
@@ -236,10 +238,7 @@ impl App {
 
             // Get extensions for creating Surface
             let extension_names = enumerate_required_extensions(window.raw_display_handle())?;
-            let mut extension_names = extension_names
-                .iter()
-                .map(|name| *name)
-                .collect::<Vec<_>>();
+            let mut extension_names = extension_names.iter().map(|name| *name).collect::<Vec<_>>();
             if ENABLE_VALIDATION_LAYERS {
                 extension_names.push(DebugUtils::name().as_ptr());
             }
@@ -319,7 +318,15 @@ impl App {
 
         // Create Surface
         let surface_loader = Surface::new(&entry, &instance);
-        let surface = unsafe { create_surface(&entry, &instance, window.raw_display_handle(), window.raw_window_handle(), None)? };
+        let surface = unsafe {
+            create_surface(
+                &entry,
+                &instance,
+                window.raw_display_handle(),
+                window.raw_window_handle(),
+                None,
+            )?
+        };
 
         // Select Physical Device
         let (physical_device, graphics_queue_index, present_queue_index) = {
@@ -542,6 +549,7 @@ impl App {
                 physical_device,
                 debug_settings: Default::default(),
                 buffer_device_address: false,
+                allocation_sizes: Default::default(),
             })?
         };
 
@@ -635,6 +643,7 @@ impl App {
                     requirements: color_image_requirements,
                     location: gpu_allocator::MemoryLocation::GpuOnly,
                     linear: false,
+                    allocation_scheme: AllocationScheme::GpuAllocatorManaged,
                 })?;
                 unsafe {
                     device.bind_image_memory(
@@ -688,6 +697,7 @@ impl App {
                     requirements: depth_image_requirements,
                     location: gpu_allocator::MemoryLocation::GpuOnly,
                     linear: false,
+                    allocation_scheme: AllocationScheme::GpuAllocatorManaged,
                 })?;
                 unsafe {
                     device.bind_image_memory(
@@ -766,6 +776,7 @@ impl App {
                             requirements,
                             location: gpu_allocator::MemoryLocation::CpuToGpu,
                             linear: true,
+                            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
                         })
                         .unwrap();
                     unsafe {
@@ -1034,6 +1045,7 @@ impl App {
             requirements,
             location: gpu_allocator::MemoryLocation::CpuToGpu,
             linear: true,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
         })?;
         unsafe {
             device.bind_buffer_memory(
@@ -1067,6 +1079,7 @@ impl App {
             requirements,
             location: gpu_allocator::MemoryLocation::GpuOnly,
             linear: true,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
         })?;
         unsafe {
             device.bind_buffer_memory(
@@ -1149,6 +1162,7 @@ impl App {
                 requirements: staging_buffer_requirements,
                 location: gpu_allocator::MemoryLocation::CpuToGpu,
                 linear: true,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })?;
             unsafe {
                 device.bind_buffer_memory(
@@ -1192,6 +1206,7 @@ impl App {
                 requirements: image_requirements,
                 location: gpu_allocator::MemoryLocation::GpuOnly,
                 linear: false,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })?;
             unsafe {
                 device.bind_image_memory(
@@ -1733,7 +1748,12 @@ impl App {
                 ui.checkbox(&mut self.show_scene_window, "Scene Window");
                 ui.horizontal(|ui| {
                     ui.label("Scene Clear Color");
-                    let mut hsva = Hsva::from_rgba_premultiplied(self.clear_color[0], self.clear_color[1], self.clear_color[2], self.clear_color[3]);
+                    let mut hsva = Hsva::from_rgba_premultiplied(
+                        self.clear_color[0],
+                        self.clear_color[1],
+                        self.clear_color[2],
+                        self.clear_color[3],
+                    );
                     egui::color_picker::color_edit_button_hsva(
                         ui,
                         &mut hsva,
@@ -1750,7 +1770,10 @@ impl App {
                     .scroll2([true, true])
                     .open(show_user_texture_window)
                     .show(&self.egui_integration.context(), |ui| {
-                        ui.image(image_texture_id, [256.0, 256.0]);
+                        ui.image(ImageSource::Texture(SizedTexture {
+                            id: image_texture_id,
+                            size: Vec2 { x: 256.0, y: 256.0 },
+                        }));
                     });
             }
             {
@@ -1783,8 +1806,12 @@ impl App {
                             ui.painter().add(Shape::Mesh(mesh));
 
                             if response.dragged() {
-                                if ui.input().pointer.button_down(PointerButton::Primary) {
-                                    if let Some(pointer_pos) = ui.input().pointer.interact_pos() {
+                                if ui.input(|input| {
+                                    input.pointer.button_down(PointerButton::Primary)
+                                }) {
+                                    if let Some(pointer_pos) =
+                                        ui.input(|input| input.pointer.interact_pos())
+                                    {
                                         if let Some(prev_pointer_pos) = prev_pointer_pos {
                                             let delta = pointer_pos - *prev_pointer_pos;
                                             *rotation_x += delta.y * 2.0;
@@ -1803,8 +1830,12 @@ impl App {
             }
             let output = self.egui_integration.end_frame(&mut self.window);
             let clipped_meshes = self.egui_integration.context().tessellate(output.shapes);
-            self.egui_integration
-                .paint(command_buffer, image_index, clipped_meshes, output.textures_delta);
+            self.egui_integration.paint(
+                command_buffer,
+                image_index,
+                clipped_meshes,
+                output.textures_delta,
+            );
             // #### egui ##########################################################################
 
             self.device.end_command_buffer(command_buffer)?;
@@ -2061,7 +2092,10 @@ fn main() -> Result<()> {
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
-            Event::WindowEvent { event, window_id: _ } => {
+            Event::WindowEvent {
+                event,
+                window_id: _,
+            } => {
                 // Update Egui integration so the UI works!
                 let _response = app.egui_integration.handle_event(&event);
                 match event {
@@ -2076,7 +2110,7 @@ fn main() -> Result<()> {
                     }
                     _ => (),
                 }
-            },
+            }
             Event::MainEventsCleared => app.window.request_redraw(),
             Event::RedrawRequested(_window_id) => app.draw().unwrap(),
             _ => (),
