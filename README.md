@@ -64,6 +64,12 @@ fn main() -> Result<()> {
 
 [Full example is in examples directory](https://github.com/MatchaChoco010/egui-winit-ash-integration/tree/main/examples)
 
+# Feature flags
+
+`gpu-allocator-feature` - Enables the gpu-allocator crate.
+
+The other features directly control the underlying [egui_winit features](https://docs.rs/egui-winit/latest/egui_winit/)
+
 # License
 
 MIT OR Apache-2.0

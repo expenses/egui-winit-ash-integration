@@ -6,9 +6,11 @@ use egui::{
     epaint::{ahash::AHashMap, ImageDelta},
     Context, TextureId, TexturesDelta,
 };
-use egui_winit::{winit::window::Window, EventResponse};
+use egui_winit::{
+    winit::{event_loop::EventLoop, window::Window},
+    EventResponse,
+};
 use std::ffi::CString;
-use winit::event_loop::EventLoop;
 
 use crate::{utils::insert_image_memory_barrier, *};
 
