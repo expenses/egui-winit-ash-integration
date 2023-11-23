@@ -6,10 +6,8 @@ use egui::{
     epaint::{ahash::AHashMap, ImageDelta},
     Context, TextureId, TexturesDelta,
 };
-use egui_winit::{
-    winit::{event_loop::EventLoop, window::Window},
-    EventResponse,
-};
+use egui_winit::{winit::window::Window, EventResponse};
+use raw_window_handle::HasRawDisplayHandle;
 use std::ffi::CString;
 
 use crate::{utils::insert_image_memory_barrier, *};
@@ -50,8 +48,8 @@ pub struct Integration<A: AllocatorTrait> {
 }
 impl<A: AllocatorTrait> Integration<A> {
     /// Create an instance of the integration.
-    pub fn new<T>(
-        event_loop: &EventLoop<T>,
+    pub fn new<H: HasRawDisplayHandle>(
+        display_target: &H,
         physical_width: u32,
         physical_height: u32,
         scale_factor: f64,
@@ -70,7 +68,7 @@ impl<A: AllocatorTrait> Integration<A> {
         context.set_fonts(font_definitions);
         context.set_style(style);
 
-        let mut egui_winit = egui_winit::State::new(&event_loop);
+        let mut egui_winit = egui_winit::State::new(display_target);
         egui_winit.set_pixels_per_point(scale_factor as f32);
 
         // Get swap_images to get len of swapchain images and to create framebuffers
