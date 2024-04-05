@@ -9,6 +9,10 @@
 This is the [egui](https://github.com/emilk/egui) integration crate for [egui-winit](https://github.com/emilk/egui/tree/master/crates/egui-winit) and [ash](https://github.com/MaikKlein/ash).
 The default GPU allocator is [gpu_allocator](https://github.com/Traverse-Research/gpu-allocator), but you can also implement AllocatorTrait.
 
+This crate does not support multi-viewports for multi-window since version 0.24 of egui.
+
+[egui-ash](https://github.com/MatchaChoco010/egui-ash) is an alternative crate, which supports multi-viewports, so please take a look at this one.
+
 # Example
 
 ```sh
