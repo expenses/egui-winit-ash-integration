@@ -62,5 +62,3 @@ pub use integration::*;
 
 #[cfg(feature = "gpu-allocator-feature")]
 mod gpu_allocator;
-#[cfg(feature = "gpu-allocator-feature")]
-pub use crate::gpu_allocator::*;
