@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
 
-use ash::{extensions::khr::Swapchain, vk, Device};
+use ash::{khr::swapchain::Device as Swapchain, vk, Device};
 use bytemuck::bytes_of;
 use egui::{
     epaint::{ahash::AHashMap, ImageDelta},
@@ -41,7 +41,7 @@ pub struct Integration<A: AllocatorTrait> {
     index_buffer_allocations: Vec<A::Allocation>,
     texture_desc_sets: AHashMap<TextureId, vk::DescriptorSet>,
     texture_images: AHashMap<TextureId, vk::Image>,
-    texture_image_infos: AHashMap<TextureId, vk::ImageCreateInfo>,
+    texture_image_infos: AHashMap<TextureId, vk::ImageCreateInfo<'static>>,
     texture_allocations: AHashMap<TextureId, A::Allocation>,
     texture_image_views: AHashMap<TextureId, vk::ImageView>,
 
@@ -55,6 +55,7 @@ impl<A: AllocatorTrait> Integration<A> {
         physical_width: u32,
         physical_height: u32,
         scale_factor: f64,
+        max_texture_side: usize,
         font_definitions: egui::FontDefinitions,
         style: egui::Style,
         device: Device,
@@ -70,8 +71,13 @@ impl<A: AllocatorTrait> Integration<A> {
         context.set_fonts(font_definitions);
         context.set_style(style);
 
-        let mut egui_winit = egui_winit::State::new(&event_loop);
-        egui_winit.set_pixels_per_point(scale_factor as f32);
+        let egui_winit = egui_winit::State::new(
+            context.clone(),
+            context.viewport_id(),
+            event_loop,
+            Some(scale_factor as f32),
+            Some(max_texture_side as usize),
+        );
 
         // Get swap_images to get len of swapchain images and to create framebuffers
         let swap_images = unsafe {
@@ -83,13 +89,12 @@ impl<A: AllocatorTrait> Integration<A> {
         // Create DescriptorPool
         let descriptor_pool = unsafe {
             device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::builder()
+                &vk::DescriptorPoolCreateInfo::default()
                     .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
                     .max_sets(1024)
-                    .pool_sizes(&[vk::DescriptorPoolSize::builder()
+                    .pool_sizes(&[vk::DescriptorPoolSize::default()
                         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .descriptor_count(1024)
-                        .build()]),
+                        .descriptor_count(1024)]),
                 None,
             )
         }
@@ -102,13 +107,12 @@ impl<A: AllocatorTrait> Integration<A> {
                 sets.push(
                     unsafe {
                         device.create_descriptor_set_layout(
-                            &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
-                                vk::DescriptorSetLayoutBinding::builder()
+                            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[
+                                vk::DescriptorSetLayoutBinding::default()
                                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                                     .descriptor_count(1)
                                     .binding(0)
-                                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                                    .build(),
+                                    .stage_flags(vk::ShaderStageFlags::FRAGMENT),
                             ]),
                             None,
                         )
@@ -122,8 +126,8 @@ impl<A: AllocatorTrait> Integration<A> {
         // Create RenderPass
         let render_pass = unsafe {
             device.create_render_pass(
-                &vk::RenderPassCreateInfo::builder()
-                    .attachments(&[vk::AttachmentDescription::builder()
+                &vk::RenderPassCreateInfo::default()
+                    .attachments(&[vk::AttachmentDescription::default()
                         .format(surface_format.format)
                         .samples(vk::SampleCountFlags::TYPE_1)
                         .load_op(vk::AttachmentLoadOp::LOAD)
@@ -131,23 +135,19 @@ impl<A: AllocatorTrait> Integration<A> {
                         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                         .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                        .build()])
-                    .subpasses(&[vk::SubpassDescription::builder()
+                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)])
+                    .subpasses(&[vk::SubpassDescription::default()
                         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                        .color_attachments(&[vk::AttachmentReference::builder()
+                        .color_attachments(&[vk::AttachmentReference::default()
                             .attachment(0)
-                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .build()])
-                        .build()])
-                    .dependencies(&[vk::SubpassDependency::builder()
+                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)])])
+                    .dependencies(&[vk::SubpassDependency::default()
                         .src_subpass(vk::SUBPASS_EXTERNAL)
                         .dst_subpass(0)
                         .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
                         .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .build()]),
+                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
                 None,
             )
         }
@@ -156,13 +156,14 @@ impl<A: AllocatorTrait> Integration<A> {
         // Create PipelineLayout
         let pipeline_layout = unsafe {
             device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::builder()
+                &vk::PipelineLayoutCreateInfo::default()
                     .set_layouts(&descriptor_set_layouts)
-                    .push_constant_ranges(&[vk::PushConstantRange::builder()
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .offset(0)
-                        .size(std::mem::size_of::<f32>() as u32 * 2) // screen size
-                        .build()]),
+                    .push_constant_ranges(&[
+                        vk::PushConstantRange::default()
+                            .stage_flags(vk::ShaderStageFlags::VERTEX)
+                            .offset(0)
+                            .size(std::mem::size_of::<f32>() as u32 * 2), // screen size
+                    ]),
                 None,
             )
         }
@@ -170,36 +171,32 @@ impl<A: AllocatorTrait> Integration<A> {
 
         // Create Pipeline
         let pipeline = {
-            let bindings = [vk::VertexInputBindingDescription::builder()
+            let bindings = [vk::VertexInputBindingDescription::default()
                 .binding(0)
                 .input_rate(vk::VertexInputRate::VERTEX)
                 .stride(
                     4 * std::mem::size_of::<f32>() as u32 + 4 * std::mem::size_of::<u8>() as u32,
-                )
-                .build()];
+                )];
 
             let attributes = [
                 // position
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(0)
                     .location(0)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // uv
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(8)
                     .location(1)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // color
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(16)
                     .location(2)
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .build(),
+                    .format(vk::Format::R8G8B8A8_UNORM),
             ];
 
             let vertex_shader_module = {
@@ -224,24 +221,22 @@ impl<A: AllocatorTrait> Integration<A> {
             };
             let main_function_name = CString::new("main").unwrap();
             let pipeline_shader_stages = [
-                vk::PipelineShaderStageCreateInfo::builder()
+                vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::VERTEX)
                     .module(vertex_shader_module)
-                    .name(&main_function_name)
-                    .build(),
-                vk::PipelineShaderStageCreateInfo::builder()
+                    .name(&main_function_name),
+                vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::FRAGMENT)
                     .module(fragment_shader_module)
-                    .name(&main_function_name)
-                    .build(),
+                    .name(&main_function_name),
             ];
 
-            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-            let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport_info = vk::PipelineViewportStateCreateInfo::default()
                 .viewport_count(1)
                 .scissor_count(1);
-            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::builder()
+            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::default()
                 .depth_clamp_enable(false)
                 .rasterizer_discard_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
@@ -249,12 +244,11 @@ impl<A: AllocatorTrait> Integration<A> {
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .depth_bias_enable(false)
                 .line_width(1.0);
-            let stencil_op = vk::StencilOpState::builder()
+            let stencil_op = vk::StencilOpState::default()
                 .fail_op(vk::StencilOp::KEEP)
                 .pass_op(vk::StencilOp::KEEP)
-                .compare_op(vk::CompareOp::ALWAYS)
-                .build();
-            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+                .compare_op(vk::CompareOp::ALWAYS);
+            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::default()
                 .depth_test_enable(false)
                 .depth_write_enable(false)
                 .depth_compare_op(vk::CompareOp::ALWAYS)
@@ -262,7 +256,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .stencil_test_enable(false)
                 .front(stencil_op)
                 .back(stencil_op);
-            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::builder()
+            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(
                     vk::ColorComponentFlags::R
                         | vk::ColorComponentFlags::G
@@ -271,20 +265,19 @@ impl<A: AllocatorTrait> Integration<A> {
                 )
                 .blend_enable(true)
                 .src_color_blend_factor(vk::BlendFactor::ONE)
-                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                .build()];
-            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
+                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)];
+            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::default()
                 .attachments(&color_blend_attachments);
             let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dynamic_state_info =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+                vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default()
                 .vertex_attribute_descriptions(&attributes)
                 .vertex_binding_descriptions(&bindings);
-            let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisample_info = vk::PipelineMultisampleStateCreateInfo::default()
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::builder()
+            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::default()
                 .stages(&pipeline_shader_stages)
                 .vertex_input_state(&vertex_input_state)
                 .input_assembly_state(&input_assembly_info)
@@ -296,8 +289,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .dynamic_state(&dynamic_state_info)
                 .layout(pipeline_layout)
                 .render_pass(render_pass)
-                .subpass(0)
-                .build()];
+                .subpass(0)];
 
             let pipeline = unsafe {
                 device.create_graphics_pipelines(
@@ -317,7 +309,7 @@ impl<A: AllocatorTrait> Integration<A> {
         // Create Sampler
         let sampler = unsafe {
             device.create_sampler(
-                &vk::SamplerCreateInfo::builder()
+                &vk::SamplerCreateInfo::default()
                     .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -338,18 +330,17 @@ impl<A: AllocatorTrait> Integration<A> {
             .map(|swapchain_image| unsafe {
                 device
                     .create_image_view(
-                        &vk::ImageViewCreateInfo::builder()
+                        &vk::ImageViewCreateInfo::default()
                             .image(swapchain_image.clone())
                             .view_type(vk::ImageViewType::TYPE_2D)
                             .format(surface_format.format)
                             .subresource_range(
-                                vk::ImageSubresourceRange::builder()
+                                vk::ImageSubresourceRange::default()
                                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                                     .base_mip_level(0)
                                     .level_count(1)
                                     .base_array_layer(0)
-                                    .layer_count(1)
-                                    .build(),
+                                    .layer_count(1),
                             ),
                         None,
                     )
@@ -362,7 +353,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 let attachments = &[image_views];
                 device
                     .create_framebuffer(
-                        &vk::FramebufferCreateInfo::builder()
+                        &vk::FramebufferCreateInfo::default()
                             .render_pass(render_pass)
                             .attachments(attachments)
                             .width(physical_width)
@@ -383,7 +374,7 @@ impl<A: AllocatorTrait> Integration<A> {
             let vertex_buffer = unsafe {
                 device
                     .create_buffer(
-                        &vk::BufferCreateInfo::builder()
+                        &vk::BufferCreateInfo::default()
                             .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                             .sharing_mode(vk::SharingMode::EXCLUSIVE)
                             .size(Self::vertex_buffer_size()),
@@ -413,7 +404,7 @@ impl<A: AllocatorTrait> Integration<A> {
             let index_buffer = unsafe {
                 device
                     .create_buffer(
-                        &vk::BufferCreateInfo::builder()
+                        &vk::BufferCreateInfo::default()
                             .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                             .sharing_mode(vk::SharingMode::EXCLUSIVE)
                             .size(Self::index_buffer_size()),
@@ -449,13 +440,12 @@ impl<A: AllocatorTrait> Integration<A> {
         // User Textures
         let user_texture_layout = unsafe {
             device.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
-                    vk::DescriptorSetLayoutBinding::builder()
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[
+                    vk::DescriptorSetLayoutBinding::default()
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .descriptor_count(1)
                         .binding(0)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                        .build(),
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
                 ]),
                 None,
             )
@@ -511,9 +501,10 @@ impl<A: AllocatorTrait> Integration<A> {
     /// handling winit event.
     pub fn handle_event(
         &mut self,
-        winit_event: &egui_winit::winit::event::WindowEvent<'_>,
+        window: &Window,
+        winit_event: &egui_winit::winit::event::WindowEvent,
     ) -> EventResponse {
-        self.egui_winit.on_event(&self.context, winit_event)
+        self.egui_winit.on_window_event(window, winit_event)
     }
 
     /// begin frame.
@@ -526,11 +517,8 @@ impl<A: AllocatorTrait> Integration<A> {
     pub fn end_frame(&mut self, window: &Window) -> egui::FullOutput {
         let output = self.context.end_frame();
 
-        self.egui_winit.handle_platform_output(
-            window,
-            &self.context,
-            output.platform_output.clone(),
-        );
+        self.egui_winit
+            .handle_platform_output(window, output.platform_output.clone());
 
         output
     }
@@ -591,19 +579,16 @@ impl<A: AllocatorTrait> Integration<A> {
         unsafe {
             self.device.cmd_begin_render_pass(
                 command_buffer,
-                &vk::RenderPassBeginInfo::builder()
+                &vk::RenderPassBeginInfo::default()
                     .render_pass(self.render_pass)
                     .framebuffer(self.framebuffers[index])
                     .clear_values(&[])
                     .render_area(
-                        vk::Rect2D::builder()
-                            .extent(
-                                vk::Extent2D::builder()
-                                    .width(self.physical_width)
-                                    .height(self.physical_height)
-                                    .build(),
-                            )
-                            .build(),
+                        vk::Rect2D::default().extent(
+                            vk::Extent2D::default()
+                                .width(self.physical_width)
+                                .height(self.physical_height),
+                        ),
                     ),
                 vk::SubpassContents::INLINE,
             );
@@ -631,14 +616,13 @@ impl<A: AllocatorTrait> Integration<A> {
             self.device.cmd_set_viewport(
                 command_buffer,
                 0,
-                &[vk::Viewport::builder()
+                &[vk::Viewport::default()
                     .x(0.0)
                     .y(0.0)
                     .width(self.physical_width as f32)
                     .height(self.physical_height as f32)
                     .min_depth(0.0)
-                    .max_depth(1.0)
-                    .build()],
+                    .max_depth(1.0)],
             );
             let width_points = self.physical_width as f32 / self.scale_factor as f32;
             let height_points = self.physical_height as f32 / self.scale_factor as f32;
@@ -750,20 +734,17 @@ impl<A: AllocatorTrait> Integration<A> {
                 self.device.cmd_set_scissor(
                     command_buffer,
                     0,
-                    &[vk::Rect2D::builder()
+                    &[vk::Rect2D::default()
                         .offset(
-                            vk::Offset2D::builder()
+                            vk::Offset2D::default()
                                 .x(min.x.round() as i32)
-                                .y(min.y.round() as i32)
-                                .build(),
+                                .y(min.y.round() as i32),
                         )
                         .extent(
-                            vk::Extent2D::builder()
+                            vk::Extent2D::default()
                                 .width((max.x.round() - min.x) as u32)
-                                .height((max.y.round() - min.y) as u32)
-                                .build(),
-                        )
-                        .build()],
+                                .height((max.y.round() - min.y) as u32),
+                        )],
                 );
                 self.device.cmd_draw_indexed(
                     command_buffer,
@@ -824,9 +805,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .collect(),
         };
         let cmd_pool = {
-            let cmd_pool_info = vk::CommandPoolCreateInfo::builder()
-                .queue_family_index(self.qfi)
-                .build();
+            let cmd_pool_info = vk::CommandPoolCreateInfo::default().queue_family_index(self.qfi);
             unsafe {
                 self.device
                     .create_command_pool(&cmd_pool_info, None)
@@ -834,23 +813,22 @@ impl<A: AllocatorTrait> Integration<A> {
             }
         };
         let cmd_buff = {
-            let cmd_buff_alloc_info = vk::CommandBufferAllocateInfo::builder()
+            let cmd_buff_alloc_info = vk::CommandBufferAllocateInfo::default()
                 .command_buffer_count(1u32)
                 .command_pool(cmd_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .build();
+                .level(vk::CommandBufferLevel::PRIMARY);
             unsafe {
                 self.device
                     .allocate_command_buffers(&cmd_buff_alloc_info)
                     .unwrap()[0]
             }
         };
-        let fence_info = vk::FenceCreateInfo::builder().build();
+        let fence_info = vk::FenceCreateInfo::default();
         let cmd_buff_fence = unsafe { self.device.create_fence(&fence_info, None).unwrap() };
 
         let (staging_buffer, staging_allocation) = {
             let buffer_size = data.len() as vk::DeviceSize;
-            let buffer_info = vk::BufferCreateInfo::builder()
+            let buffer_info = vk::BufferCreateInfo::default()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC);
             let texture_buffer = unsafe { self.device.create_buffer(&buffer_info, None) }.unwrap();
@@ -881,7 +859,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 height: delta.image.height() as u32,
                 depth: 1,
             };
-            let create_info = vk::ImageCreateInfo::builder()
+            let create_info = vk::ImageCreateInfo::default()
                 .array_layers(1)
                 .extent(extent)
                 .flags(vk::ImageCreateFlags::empty())
@@ -896,8 +874,7 @@ impl<A: AllocatorTrait> Integration<A> {
                     vk::ImageUsageFlags::SAMPLED
                         | vk::ImageUsageFlags::TRANSFER_DST
                         | vk::ImageUsageFlags::TRANSFER_SRC,
-                )
-                .build();
+                );
             let handle = unsafe { self.device.create_image(&create_info, None) }.unwrap();
             let requirements = unsafe { self.device.get_image_memory_requirements(handle) };
             let allocation = self
@@ -917,29 +894,26 @@ impl<A: AllocatorTrait> Integration<A> {
         };
         self.texture_image_infos.insert(texture_id, info);
         let texture_image_view = {
-            let create_info = vk::ImageViewCreateInfo::builder()
+            let create_info = vk::ImageViewCreateInfo::default()
                 .components(vk::ComponentMapping::default())
                 .flags(vk::ImageViewCreateFlags::empty())
                 .format(vk::Format::R8G8B8A8_UNORM)
                 .image(texture_image)
                 .subresource_range(
-                    vk::ImageSubresourceRange::builder()
+                    vk::ImageSubresourceRange::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .base_array_layer(0)
                         .base_mip_level(0)
                         .layer_count(1)
-                        .level_count(1)
-                        .build(),
+                        .level_count(1),
                 )
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .build();
+                .view_type(vk::ImageViewType::TYPE_2D);
             unsafe { self.device.create_image_view(&create_info, None).unwrap() }
         };
         // begin cmd buff
         unsafe {
-            let cmd_buff_begin_info = vk::CommandBufferBeginInfo::builder()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-                .build();
+            let cmd_buff_begin_info = vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             self.device
                 .begin_command_buffer(cmd_buff, &cmd_buff_begin_info)
                 .unwrap();
@@ -957,33 +931,30 @@ impl<A: AllocatorTrait> Integration<A> {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::PipelineStageFlags::HOST,
             vk::PipelineStageFlags::TRANSFER,
-            vk::ImageSubresourceRange::builder()
+            vk::ImageSubresourceRange::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_array_layer(0u32)
                 .layer_count(1u32)
                 .base_mip_level(0u32)
-                .level_count(1u32)
-                .build(),
+                .level_count(1u32),
         );
-        let region = vk::BufferImageCopy::builder()
+        let region = vk::BufferImageCopy::default()
             .buffer_offset(0)
             .buffer_row_length(delta.image.width() as u32)
             .buffer_image_height(delta.image.height() as u32)
             .image_subresource(
-                vk::ImageSubresourceLayers::builder()
+                vk::ImageSubresourceLayers::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
                     .layer_count(1)
-                    .mip_level(0)
-                    .build(),
+                    .mip_level(0),
             )
             .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
             .image_extent(vk::Extent3D {
                 width: delta.image.width() as u32,
                 height: delta.image.height() as u32,
                 depth: 1,
-            })
-            .build();
+            });
         unsafe {
             self.device.cmd_copy_buffer_to_image(
                 cmd_buff,
@@ -1005,22 +976,19 @@ impl<A: AllocatorTrait> Integration<A> {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::VERTEX_SHADER,
-            vk::ImageSubresourceRange::builder()
+            vk::ImageSubresourceRange::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_array_layer(0u32)
                 .layer_count(1u32)
                 .base_mip_level(0u32)
-                .level_count(1u32)
-                .build(),
+                .level_count(1u32),
         );
 
         unsafe {
             self.device.end_command_buffer(cmd_buff).unwrap();
         }
         let cmd_buffs = [cmd_buff];
-        let submit_infos = [vk::SubmitInfo::builder()
-            .command_buffers(&cmd_buffs)
-            .build()];
+        let submit_infos = [vk::SubmitInfo::default().command_buffers(&cmd_buffs)];
         unsafe {
             self.device
                 .queue_submit(self.queue, &submit_infos, cmd_buff_fence)
@@ -1043,9 +1011,8 @@ impl<A: AllocatorTrait> Integration<A> {
                         .unwrap();
                     self.device.reset_fences(&[cmd_buff_fence]).unwrap();
                     // begin cmd buff
-                    let cmd_buff_begin_info = vk::CommandBufferBeginInfo::builder()
-                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-                        .build();
+                    let cmd_buff_begin_info = vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
                     self.device
                         .begin_command_buffer(cmd_buff, &cmd_buff_begin_info)
                         .unwrap();
@@ -1063,13 +1030,12 @@ impl<A: AllocatorTrait> Integration<A> {
                         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                         vk::PipelineStageFlags::FRAGMENT_SHADER,
                         vk::PipelineStageFlags::TRANSFER,
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0u32)
                             .layer_count(1u32)
                             .base_mip_level(0u32)
-                            .level_count(1u32)
-                            .build(),
+                            .level_count(1u32),
                     );
                     // Transition new image for transfer src
                     insert_image_memory_barrier(
@@ -1084,13 +1050,12 @@ impl<A: AllocatorTrait> Integration<A> {
                         vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                         vk::PipelineStageFlags::FRAGMENT_SHADER,
                         vk::PipelineStageFlags::TRANSFER,
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0u32)
                             .layer_count(1u32)
                             .base_mip_level(0u32)
-                            .level_count(1u32)
-                            .build(),
+                            .level_count(1u32),
                     );
                     let top_left = vk::Offset3D {
                         x: pos[0] as i32,
@@ -1149,19 +1114,16 @@ impl<A: AllocatorTrait> Integration<A> {
                         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                         vk::PipelineStageFlags::TRANSFER,
                         vk::PipelineStageFlags::FRAGMENT_SHADER,
-                        vk::ImageSubresourceRange::builder()
+                        vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
                             .base_array_layer(0u32)
                             .layer_count(1u32)
                             .base_mip_level(0u32)
-                            .level_count(1u32)
-                            .build(),
+                            .level_count(1u32),
                     );
                     self.device.end_command_buffer(cmd_buff).unwrap();
                     let cmd_buffs = [cmd_buff];
-                    let submit_infos = [vk::SubmitInfo::builder()
-                        .command_buffers(&cmd_buffs)
-                        .build()];
+                    let submit_infos = [vk::SubmitInfo::default().command_buffers(&cmd_buffs)];
                     self.device
                         .queue_submit(self.queue, &submit_infos, cmd_buff_fence)
                         .unwrap();
@@ -1182,28 +1144,25 @@ impl<A: AllocatorTrait> Integration<A> {
 
             // update dsc set
             let dsc_set = {
-                let dsc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                let dsc_alloc_info = vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(self.descriptor_pool)
-                    .set_layouts(&[self.descriptor_set_layouts[0]])
-                    .build();
+                    .set_layouts(std::slice::from_ref(&self.descriptor_set_layouts[0]));
                 unsafe {
                     self.device
                         .allocate_descriptor_sets(&dsc_alloc_info)
                         .unwrap()[0]
                 }
             };
-            let image_info = vk::DescriptorImageInfo::builder()
+            let image_info = vk::DescriptorImageInfo::default()
                 .image_view(texture_image_view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .sampler(self.sampler)
-                .build();
-            let dsc_writes = [vk::WriteDescriptorSet::builder()
+                .sampler(self.sampler);
+            let dsc_writes = [vk::WriteDescriptorSet::default()
                 .dst_set(dsc_set)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .dst_array_element(0_u32)
                 .dst_binding(0_u32)
-                .image_info(&[image_info])
-                .build()];
+                .image_info(std::slice::from_ref(&image_info))];
             unsafe {
                 self.device.update_descriptor_sets(&dsc_writes, &[]);
             }
@@ -1254,8 +1213,8 @@ impl<A: AllocatorTrait> Integration<A> {
         // Recreate render pass for update surface format
         self.render_pass = unsafe {
             self.device.create_render_pass(
-                &vk::RenderPassCreateInfo::builder()
-                    .attachments(&[vk::AttachmentDescription::builder()
+                &vk::RenderPassCreateInfo::default()
+                    .attachments(&[vk::AttachmentDescription::default()
                         .format(surface_format.format)
                         .samples(vk::SampleCountFlags::TYPE_1)
                         .load_op(vk::AttachmentLoadOp::LOAD)
@@ -1263,23 +1222,19 @@ impl<A: AllocatorTrait> Integration<A> {
                         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                         .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                        .build()])
-                    .subpasses(&[vk::SubpassDescription::builder()
+                        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)])
+                    .subpasses(&[vk::SubpassDescription::default()
                         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                        .color_attachments(&[vk::AttachmentReference::builder()
+                        .color_attachments(&[vk::AttachmentReference::default()
                             .attachment(0)
-                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .build()])
-                        .build()])
-                    .dependencies(&[vk::SubpassDependency::builder()
+                            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)])])
+                    .dependencies(&[vk::SubpassDependency::default()
                         .src_subpass(vk::SUBPASS_EXTERNAL)
                         .dst_subpass(0)
                         .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
                         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
                         .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                        .build()]),
+                        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
                 None,
             )
         }
@@ -1287,33 +1242,29 @@ impl<A: AllocatorTrait> Integration<A> {
 
         // Recreate pipeline for update render pass
         self.pipeline = {
-            let bindings = [vk::VertexInputBindingDescription::builder()
+            let bindings = [vk::VertexInputBindingDescription::default()
                 .binding(0)
                 .input_rate(vk::VertexInputRate::VERTEX)
-                .stride(5 * std::mem::size_of::<f32>() as u32)
-                .build()];
+                .stride(5 * std::mem::size_of::<f32>() as u32)];
             let attributes = [
                 // position
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(0)
                     .location(0)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // uv
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(8)
                     .location(1)
-                    .format(vk::Format::R32G32_SFLOAT)
-                    .build(),
+                    .format(vk::Format::R32G32_SFLOAT),
                 // color
-                vk::VertexInputAttributeDescription::builder()
+                vk::VertexInputAttributeDescription::default()
                     .binding(0)
                     .offset(16)
                     .location(2)
-                    .format(vk::Format::R8G8B8A8_UNORM)
-                    .build(),
+                    .format(vk::Format::R8G8B8A8_UNORM),
             ];
 
             let vertex_shader_module = {
@@ -1344,24 +1295,22 @@ impl<A: AllocatorTrait> Integration<A> {
             };
             let main_function_name = CString::new("main").unwrap();
             let pipeline_shader_stages = [
-                vk::PipelineShaderStageCreateInfo::builder()
+                vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::VERTEX)
                     .module(vertex_shader_module)
-                    .name(&main_function_name)
-                    .build(),
-                vk::PipelineShaderStageCreateInfo::builder()
+                    .name(&main_function_name),
+                vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::FRAGMENT)
                     .module(fragment_shader_module)
-                    .name(&main_function_name)
-                    .build(),
+                    .name(&main_function_name),
             ];
 
-            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
                 .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-            let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
+            let viewport_info = vk::PipelineViewportStateCreateInfo::default()
                 .viewport_count(1)
                 .scissor_count(1);
-            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::builder()
+            let rasterization_info = vk::PipelineRasterizationStateCreateInfo::default()
                 .depth_clamp_enable(false)
                 .rasterizer_discard_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
@@ -1369,12 +1318,11 @@ impl<A: AllocatorTrait> Integration<A> {
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .depth_bias_enable(false)
                 .line_width(1.0);
-            let stencil_op = vk::StencilOpState::builder()
+            let stencil_op = vk::StencilOpState::default()
                 .fail_op(vk::StencilOp::KEEP)
                 .pass_op(vk::StencilOp::KEEP)
-                .compare_op(vk::CompareOp::ALWAYS)
-                .build();
-            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+                .compare_op(vk::CompareOp::ALWAYS);
+            let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::default()
                 .depth_test_enable(true)
                 .depth_write_enable(true)
                 .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
@@ -1382,7 +1330,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .stencil_test_enable(false)
                 .front(stencil_op)
                 .back(stencil_op);
-            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::builder()
+            let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(
                     vk::ColorComponentFlags::R
                         | vk::ColorComponentFlags::G
@@ -1391,20 +1339,19 @@ impl<A: AllocatorTrait> Integration<A> {
                 )
                 .blend_enable(true)
                 .src_color_blend_factor(vk::BlendFactor::ONE)
-                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                .build()];
-            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::builder()
+                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)];
+            let color_blend_info = vk::PipelineColorBlendStateCreateInfo::default()
                 .attachments(&color_blend_attachments);
             let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
             let dynamic_state_info =
-                vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+                vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default()
                 .vertex_attribute_descriptions(&attributes)
                 .vertex_binding_descriptions(&bindings);
-            let multisample_info = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisample_info = vk::PipelineMultisampleStateCreateInfo::default()
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::builder()
+            let pipeline_create_info = [vk::GraphicsPipelineCreateInfo::default()
                 .stages(&pipeline_shader_stages)
                 .vertex_input_state(&vertex_input_state)
                 .input_assembly_state(&input_assembly_info)
@@ -1416,8 +1363,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .dynamic_state(&dynamic_state_info)
                 .layout(self.pipeline_layout)
                 .render_pass(self.render_pass)
-                .subpass(0)
-                .build()];
+                .subpass(0)];
 
             let pipeline = unsafe {
                 self.device.create_graphics_pipelines(
@@ -1442,18 +1388,17 @@ impl<A: AllocatorTrait> Integration<A> {
             .map(|swapchain_image| unsafe {
                 self.device
                     .create_image_view(
-                        &vk::ImageViewCreateInfo::builder()
+                        &vk::ImageViewCreateInfo::default()
                             .image(swapchain_image.clone())
                             .view_type(vk::ImageViewType::TYPE_2D)
                             .format(surface_format.format)
                             .subresource_range(
-                                vk::ImageSubresourceRange::builder()
+                                vk::ImageSubresourceRange::default()
                                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                                     .base_mip_level(0)
                                     .level_count(1)
                                     .base_array_layer(0)
-                                    .layer_count(1)
-                                    .build(),
+                                    .layer_count(1),
                             ),
                         None,
                     )
@@ -1468,7 +1413,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 let attachments = &[image_views];
                 self.device
                     .create_framebuffer(
-                        &vk::FramebufferCreateInfo::builder()
+                        &vk::FramebufferCreateInfo::default()
                             .render_pass(self.render_pass)
                             .attachments(attachments)
                             .width(physical_width)
@@ -1516,7 +1461,7 @@ impl<A: AllocatorTrait> Integration<A> {
         let layouts = [self.user_texture_layout];
         let descriptor_set = unsafe {
             self.device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
+                &vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(self.descriptor_pool)
                     .set_layouts(&layouts),
             )
@@ -1524,16 +1469,14 @@ impl<A: AllocatorTrait> Integration<A> {
         .expect("Failed to create descriptor sets.")[0];
         unsafe {
             self.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::builder()
+                &[vk::WriteDescriptorSet::default()
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_set(descriptor_set)
-                    .image_info(&[vk::DescriptorImageInfo::builder()
+                    .image_info(&[vk::DescriptorImageInfo::default()
                         .image_view(image_view)
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .sampler(sampler)
-                        .build()])
-                    .dst_binding(0)
-                    .build()],
+                        .sampler(sampler)])
+                    .dst_binding(0)],
                 &[],
             );
         }
