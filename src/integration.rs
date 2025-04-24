@@ -502,6 +502,12 @@ impl<A: AllocatorTrait> Integration<A> {
         window: &Window,
         winit_event: &egui_winit::winit::event::WindowEvent,
     ) -> EventResponse {
+        if let egui_winit::winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } =
+            winit_event
+        {
+            self.scale_factor = *scale_factor;
+        }
+
         self.egui_winit.on_window_event(window, winit_event)
     }
 
