@@ -861,7 +861,7 @@ impl<A: AllocatorTrait> Integration<A> {
                 .array_layers(1)
                 .extent(extent)
                 .flags(vk::ImageCreateFlags::empty())
-                .format(vk::Format::R8G8B8A8_UNORM)
+                .format(vk::Format::R8G8B8A8_SRGB)
                 .image_type(vk::ImageType::TYPE_2D)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
                 .mip_levels(1)
@@ -895,7 +895,7 @@ impl<A: AllocatorTrait> Integration<A> {
             let create_info = vk::ImageViewCreateInfo::default()
                 .components(vk::ComponentMapping::default())
                 .flags(vk::ImageViewCreateFlags::empty())
-                .format(vk::Format::R8G8B8A8_UNORM)
+                .format(vk::Format::R8G8B8A8_SRGB)
                 .image(texture_image)
                 .subresource_range(
                     vk::ImageSubresourceRange::default()
