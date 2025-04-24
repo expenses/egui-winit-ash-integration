@@ -18,7 +18,7 @@ use crevice::std140::AsStd140;
 use egui_winit::winit::dpi::PhysicalSize;
 use egui_winit::winit::event::{Event, WindowEvent};
 use egui_winit::winit::event_loop::{ControlFlow, EventLoop};
-use egui_winit::winit::window::{Window, WindowBuilder};
+use egui_winit::winit::window::Window;
 use gpu_allocator::vulkan::*;
 use memoffset::offset_of;
 #[cfg(debug_assertions)]
@@ -198,11 +198,12 @@ impl App {
         let title = "Test";
 
         // Create Window
-        let window = WindowBuilder::new()
-            .with_title(title)
-            .with_inner_size(PhysicalSize::new(width, height))
-            .with_resizable(true)
-            .build(event_loop)?;
+        let window = event_loop.create_window(
+            Window::default_attributes()
+                .with_title(title)
+                .with_inner_size(PhysicalSize::new(width, height))
+                .with_resizable(true),
+        )?;
 
         // Create Entry
         let entry = Entry::linked();

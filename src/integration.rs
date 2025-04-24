@@ -74,6 +74,7 @@ impl<A: AllocatorTrait> Integration<A> {
             context.viewport_id(),
             display_target,
             Some(scale_factor as f32),
+            None,
             Some(max_texture_side as usize),
         );
 
